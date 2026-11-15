@@ -1,13 +1,15 @@
 version: '3.9'
 
+# Wszystkie dane dostępowe pochodzą z pliku .env (docker compose czyta go automatycznie)
+# — patrz .env.example. W tym pliku nie ma żadnych haseł.
 services:
   postgres:
     image: postgres:14-alpine
     ports:
-      - 5432:5432
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - ~/apps/postgres:/var/lib/postgresql/data
     environment:
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_USER=user
-      - POSTGRES_DB=pgDB
+      - POSTGRES_DB=${DB_NAME:?Ustaw DB_NAME w pliku .env}
+      - POSTGRES_USER=${DB_USERNAME:?Ustaw DB_USERNAME w pliku .env}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?Ustaw DB_PASSWORD w pliku .env}

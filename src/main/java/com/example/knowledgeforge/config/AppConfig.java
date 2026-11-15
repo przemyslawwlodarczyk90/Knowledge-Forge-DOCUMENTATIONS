@@ -2,35 +2,116 @@ package com.example.knowledgeforge.config;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Period;
 import java.time.ZoneId;
+import java.util.HashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Ładuje config.properties z classpath, opcjonalnie nadpisywany przez
- * config-local.properties (gitignorowany, na sekrety lokalne) i przez
- * zmienne środowiskowe — konwencja: "db.url" -> zmienna "DB_URL".
+ * config-local.properties (gitignorowany) i przez zmienne środowiskowe.
  * Zastępuje mechanizm @Value / @ConfigurationProperties ze Springa.
+ *
+ * <p>Źródła zmiennych środowiskowych (w kolejności priorytetu):
+ * <ol>
+ *   <li>prawdziwe zmienne procesu ({@code System.getenv}),</li>
+ *   <li>plik {@code .env} w katalogu uruchomienia (gitignorowany — tu trzymamy hasła lokalnie).</li>
+ * </ol>
+ *
+ * <p>Wartości w properties mogą odwoływać się do zmiennych przez {@code ${NAZWA}} albo
+ * {@code ${NAZWA:domyślna}} — tak config.properties w repozytorium nie zawiera żadnych sekretów,
+ * tylko odwołania. Dodatkowo działa konwencja nadpisywania: "db.url" -> zmienna "DB_URL".
  */
 public class AppConfig {
 
-    private final Properties props;
+    private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{([A-Za-z0-9_]+)(?::([^}]*))?}");
 
-    private AppConfig(Properties props) {
+    private final Properties props;
+    private final Map<String, String> dotenv;
+
+    private AppConfig(Properties props, Map<String, String> dotenv) {
         this.props = props;
+        this.dotenv = dotenv;
     }
 
     public static AppConfig load() {
         Properties props = new Properties();
         loadInto(props, "/config.properties", true);
         loadInto(props, "/config-local.properties", false);
-        return new AppConfig(props);
+        return new AppConfig(props, loadDotenv(Path.of(".env")));
     }
 
-    /** Buduje AppConfig z gotowych Properties, z pominięciem odczytu z classpath — używane przez testy. */
+    /** Buduje AppConfig z gotowych Properties, z pominięciem odczytu z classpath i pliku .env — używane przez testy. */
     public static AppConfig fromProperties(Properties props) {
-        return new AppConfig(props);
+        return new AppConfig(props, Map.of());
+    }
+
+    /** Prosty parser pliku .env: KLUCZ=wartość, komentarze '#', opcjonalne "export " i cudzysłowy. Brak pliku = pusta mapa. */
+    static Map<String, String> loadDotenv(Path file) {
+        Map<String, String> values = new HashMap<>();
+        if (!Files.isRegularFile(file)) return values;
+        try {
+            for (String raw : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                String line = raw.strip();
+                if (line.isEmpty() || line.startsWith("#")) continue;
+                if (line.startsWith("export ")) line = line.substring("export ".length()).strip();
+                int eq = line.indexOf('=');
+                if (eq <= 0) continue;
+                String key = line.substring(0, eq).strip();
+                String value = line.substring(eq + 1).strip();
+                if (value.length() >= 2
+                        && ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'")))) {
+                    value = value.substring(1, value.length() - 1);
+                }
+                values.put(key, value);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to read " + file.toAbsolutePath(), e);
+        }
+        return values;
+    }
+
+    private String env(String name) {
+        String fromProcess = System.getenv(name);
+        if (fromProcess != null && !fromProcess.isBlank()) return fromProcess;
+        String fromFile = dotenv.get(name);
+        return fromFile != null && !fromFile.isBlank() ? fromFile : null;
+    }
+
+    /** Podmienia ${NAZWA} / ${NAZWA:domyślna} na wartość zmiennej; brak zmiennej i brak domyślnej -> pusty string. */
+    private String resolvePlaceholders(String value) {
+        if (value == null || !value.contains("${")) return value;
+        Matcher m = PLACEHOLDER.matcher(value);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            String resolved = env(m.group(1));
+            if (resolved == null) resolved = m.group(2) != null ? m.group(2) : "";
+            m.appendReplacement(sb, Matcher.quoteReplacement(resolved));
+        }
+        m.appendTail(sb);
+        return sb.toString();
+    }
+
+    /**
+     * Wywoływane raz przy starcie (Main) — dane dostępowe do bazy NIE mają wartości domyślnych
+     * w kodzie ani w repozytorium, więc ich brak ma przerwać start jednoznacznym komunikatem.
+     */
+    public void requireDatabaseCredentials() {
+        StringBuilder missing = new StringBuilder();
+        if (dbUrl().isBlank()) missing.append(" DB_URL");
+        if (dbUsername().isBlank()) missing.append(" DB_USERNAME");
+        if (dbPassword().isBlank()) missing.append(" DB_PASSWORD");
+        if (!missing.isEmpty()) {
+            throw new IllegalStateException("Missing required environment variable(s):" + missing
+                    + " — set them in the environment or in the .env file (see .env.example)");
+        }
     }
 
     private static void loadInto(Properties props, String resource, boolean required) {
@@ -47,25 +128,28 @@ public class AppConfig {
 
     private String get(String key, String defaultValue) {
         String envKey = key.toUpperCase(Locale.ROOT).replace('.', '_').replace('-', '_');
-        String fromEnv = System.getenv(envKey);
-        if (fromEnv != null && !fromEnv.isBlank()) return fromEnv;
-        return props.getProperty(key, defaultValue);
+        String fromEnv = env(envKey);
+        if (fromEnv != null) return fromEnv;
+        return resolvePlaceholders(props.getProperty(key, defaultValue));
     }
 
     public int serverPort() {
         return Integer.parseInt(get("server.port", "8081"));
     }
 
+    /** Bez wartości domyślnej w kodzie — pochodzi z DB_URL (zob. requireDatabaseCredentials). */
     public String dbUrl() {
-        return get("db.url", "jdbc:postgresql://localhost:5432/pgDB");
+        return get("db.url", "");
     }
 
+    /** Bez wartości domyślnej w kodzie — pochodzi z DB_USERNAME. */
     public String dbUsername() {
-        return get("db.username", "user");
+        return get("db.username", "");
     }
 
+    /** Bez wartości domyślnej w kodzie — pochodzi WYŁĄCZNIE z DB_PASSWORD (zmienna albo plik .env). */
     public String dbPassword() {
-        return get("db.password", "password");
+        return get("db.password", "");
     }
 
     public String corsAllowedOrigin() {

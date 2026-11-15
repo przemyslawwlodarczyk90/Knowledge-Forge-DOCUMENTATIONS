@@ -1,5 +1,6 @@
 package com.example.knowledgeforge.support;
 
+import com.example.knowledgeforge.config.AppConfig;
 import com.example.knowledgeforge.config.Schema;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -24,10 +25,13 @@ import java.sql.Statement;
  */
 public final class TestDatabase {
 
-    private static final String BASE_URL = "jdbc:postgresql://localhost:5432/pgDB";
+    // Dane dostępowe NIE są zapisane w kodzie — pochodzą z DB_URL / DB_USERNAME / DB_PASSWORD
+    // (zmienne środowiskowe albo plik .env w katalogu uruchomienia testów), tak jak w aplikacji.
+    private static final AppConfig CONFIG = AppConfig.load();
+    private static final String BASE_URL = CONFIG.dbUrl();
     private static final String SCHEMA = "kf_test";
-    private static final String USER = "user";
-    private static final String PASSWORD = "password";
+    private static final String USER = CONFIG.dbUsername();
+    private static final String PASSWORD = CONFIG.dbPassword();
 
     private TestDatabase() {
     }

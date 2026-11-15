@@ -69,6 +69,7 @@ public final class Main {
 
     public static void main(String[] args) throws Exception {
         AppConfig config = AppConfig.load();
+        config.requireDatabaseCredentials();
         if (config.debugLogging()) {
             configureDebugLogging();
         }
