@@ -1,0 +1,25 @@
+HELP.md
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+
+### Frontend ###
+frontend/node_modules/
+frontend/.git/
+
+### Sekrety — NIGDY do repo ###
+.env
+.env.local
+.env.*.local
+src/main/resources/config-local.properties
+dependency-reduced-pom.xml
+
+### Dane użytkownika — pliki notatek na dysku (zob. notes.storage.path) ###
+/data/
